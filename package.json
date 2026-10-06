@@ -1,0 +1,13 @@
+{
+  "name": "scholarship-admin-dashboard-master",
+  "version": "1.0.0",
+  "description": "ScholarPath is a React, Express, MySQL scholarship portal. The legacy scholarship catalog is retained; its portal schema is added through an additive migration.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}

@@ -1,0 +1,33 @@
+﻿# Environment variables
+.env
+**/.env
+
+
+# Environment variables
+.env
+
+# Python cache
+**/__pycache__/
+*.py[cod]
+
+# Python virtual environment
+.venv/
+venv/
+
+# Uploaded files
+/Backend/uploads/
+
+# Trained ML models
+ai/eligibility_model/*.pkl
+ai/eligibility_model/*.joblib
+
+# Node dependencies
+frontend/node_modules/
+Backend/node_modules/
+
+# Build files
+frontend/build/
+
+# OS files
+.DS_Store
+Thumbs.db
