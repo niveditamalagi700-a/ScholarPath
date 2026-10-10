@@ -1,0 +1,14 @@
+{
+  "name": "scholarship-webhook-receiver",
+  "version": "1.0.0",
+  "description": "Webhook receiver for Scholarship Portal application events",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "nodemailer": "^10.0.16"
+  }
+}

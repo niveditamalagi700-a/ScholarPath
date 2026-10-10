@@ -1,13 +1,15 @@
 {
-  "name": "scholarship-admin-dashboard-master",
-  "version": "1.0.0",
-  "description": "ScholarPath is a React, Express, MySQL scholarship portal. The legacy scholarship catalog is retained; its portal schema is added through an additive migration.",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs"
+"name": "scholarship-webhook-receiver",
+"version": "1.0.0",
+"private": true,
+"description": "Webhook receiver for scholarship application email notifications",
+"main": "server.js",
+"scripts": {
+"start": "node server.js"
+},
+"dependencies": {
+"dotenv": "^16.4.5",
+"express": "^4.21.2",
+"nodemailer": "^6.9.16"
+}
 }

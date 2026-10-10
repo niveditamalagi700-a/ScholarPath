@@ -424,10 +424,23 @@ app.get('/api/applications/:id', requireAuth, async(req,res)=>{const application
         (SELECT v.remarks FROM document_verifications v WHERE v.document_id=d.id ORDER BY v.created_at DESC LIMIT 1) verification_remarks,
         (SELECT v.created_at FROM document_verifications v WHERE v.document_id=d.id ORDER BY v.created_at DESC LIMIT 1) verified_at
         FROM documents d WHERE d.application_id=? ORDER BY d.created_at`,[applicationId]);const [history]=await pool.query('SELECT h.*,u.full_name changed_by_name FROM application_status_history h LEFT JOIN users u ON u.id=h.changed_by WHERE h.application_id=? ORDER BY h.created_at',[applicationId]);const [[eligibility]]=await pool.query('SELECT eligible,explanation,evaluated_at FROM eligibility_evaluations WHERE student_id=? AND scholarship_id=? ORDER BY evaluated_at DESC LIMIT 1',[a.student_id,a.scholarship_id]);res.json({success:true,data:{...a,eligibility:eligibility||null,documents,history}});});
-app.post('/api/applications/:id/documents', requireAuth, role('STUDENT'), (req,res)=>upload.array('files')(req,res,async err=>{if(err)return fail(res,400,err.code==='LIMIT_FILE_SIZE'?'File exceeds size limit.':'Invalid upload.');const applicationId=id(req.params.id),a=await application(applicationId);if(!a||a.student_id!==req.user.id)return fail(res,404,'Application not found.');const documentType=text(req.body.documentType,100);if(!documentType||!req.files?.length)return fail(res,400,'Document type and at least one file are required.');try{const documentIds=[];for(const file of req.files){if(!magic(file))return fail(res,400,'The uploaded file content does not match its type.');const storageName=`${randomUUID()}${path.extname(file.originalname).toLowerCase()}`;fs.writeFileSync(path.join(uploadDir,storageName),file.buffer,{flag:'wx'});const [r]=await pool.query('INSERT INTO documents (student_id,application_id,document_type,original_name,storage_name,mime_type,file_size,status) VALUES (?,?,?,?,?,?,?,?)',[req.user.id,applicationId,documentType,path.basename(file.originalname),storageName,file.mimetype,file.size,'PENDING']);documentIds.push(r.insertId);}emitApplicationEvent(pool,'DOCUMENT_UPLOADED',applicationId,{documentCount:documentIds.length,documentType});res.status(201).json({success:true,data:{documentIds}});}catch(_){fail(res,500,'Document upload failed.');}}));
+app.post('/api/applications/:id/documents', requireAuth, role('STUDENT'), (req,res)=>upload.array('files')(req,res,async err=>{if(err)return fail(res,400,err.code==='LIMIT_FILE_SIZE'?'File exceeds size limit.':'Invalid upload.');const applicationId=id(req.params.id),a=await application(applicationId);if(!a||a.student_id!==req.user.id)return fail(res,404,'Application not found.');const documentType=text(req.body.documentType,100);if(!documentType||!req.files?.length)return fail(res,400,'Document type and at least one file are required.');try{const documentIds=[];for(const file of req.files){if(!magic(file))return fail(res,400,'The uploaded file content does not match its type.');const storageName=`${randomUUID()}${path.extname(file.originalname).toLowerCase()}`;fs.writeFileSync(path.join(uploadDir,storageName),file.buffer,{flag:'wx'});const [r]=await pool.query('INSERT INTO documents (student_id,application_id,document_type,original_name,storage_name,mime_type,file_size,status) VALUES (?,?,?,?,?,?,?,?)',[req.user.id,applicationId,documentType,path.basename(file.originalname),storageName,file.mimetype,file.size,'PENDING']);documentIds.push(r.insertId);}const [[student]] = await pool.query(
+    'SELECT email FROM users WHERE id = ?',
+    [req.user.id]
+);
+
+emitApplicationEvent(pool, 'DOCUMENT_UPLOADED', applicationId, {
+    documentCount: documentIds.length,
+    documentType,
+    studentEmail: student?.email
+});res.status(201).json({success:true,data:{documentIds}});}catch(_){fail(res,500,'Document upload failed.');}}));
 app.post('/api/applications/:id/submit', requireAuth, role('STUDENT'), async (req, res) => {
   const applicationId = id(req.params.id);
   const a = await application(applicationId);
+  const [[student]] = await pool.query(
+  'SELECT email FROM users WHERE id = ?',
+  [req.user.id]
+);
   if (!a || a.student_id !== req.user.id) return fail(res, 404, 'Application not found.');
   if (a.status !== 'DRAFT') return res.json({ success: true, data: { alreadySubmitted: true } });
   const [[profile]] = await pool.query('SELECT profile_completion FROM student_profiles_v2 WHERE user_id=?', [req.user.id]);
@@ -445,7 +458,11 @@ app.post('/api/applications/:id/submit', requireAuth, role('STUDENT'), async (re
     await conn.query('INSERT INTO application_status_history (application_id,status,changed_by,remarks) VALUES (?,?,?,?)', [applicationId, 'INSTITUTION_VERIFICATION', req.user.id, 'Application submitted.']);
     await notify(req.user.id, 'APPLICATION_SUBMITTED', 'Application submitted', `Your ${a.scholarship_name} application (${a.public_id}) was submitted.`, applicationId, conn);
     await conn.commit();
-    emitApplicationEvent(pool, 'APPLICATION_SUBMITTED', applicationId, { publicId: a.public_id, newStatus: 'INSTITUTION_VERIFICATION' });
+    emitApplicationEvent(pool, 'APPLICATION_SUBMITTED', applicationId, {
+  publicId: a.public_id,
+  newStatus: 'INSTITUTION_VERIFICATION',
+  studentEmail: student?.email
+});
     res.json({ success: true });
   } catch (error) {
     await conn.rollback();
@@ -458,7 +475,28 @@ app.post('/api/applications/:id/submit', requireAuth, role('STUDENT'), async (re
 app.get('/api/documents/:id/download', requireAuth, async(req,res)=>{const documentId=id(req.params.id);const [[doc]]=await pool.query('SELECT d.*,a.institution_id FROM documents d LEFT JOIN applications a ON a.id=d.application_id WHERE d.id=?',[documentId]);if(!doc)return fail(res,404,'Document not found.');const allowed=req.user.role==='ADMIN'||req.user.role==='GOVERNMENT'||doc.student_id===req.user.id||(req.user.role==='INSTITUTION'&&doc.institution_id===req.user.institutionId);if(!allowed)return fail(res,403,'You are not authorized to access this document.');const filePath=path.join(uploadDir,doc.storage_name);if(!fs.existsSync(filePath))return fail(res,404,'The stored file is missing.');if(req.query.download==='1'){res.download(filePath,doc.original_name);return;}res.setHeader('Content-Type',doc.mime_type||'application/octet-stream');res.setHeader('Content-Disposition',`inline; filename="${String(doc.original_name||'document').replace(/["\\]/g,'')}"`);res.sendFile(filePath);});
 
 app.get('/api/institution/applications', requireAuth, role('INSTITUTION'), async(req,res)=>{const [items]=await pool.query("SELECT a.*,u.full_name student_name,u.email,s.name scholarship_name FROM applications a JOIN users u ON u.id=a.student_id JOIN scholarships s ON s.id=a.scholarship_id WHERE a.institution_id=? AND a.status IN ('INSTITUTION_VERIFICATION','DOCUMENT_VERIFICATION','CORRECTION_REQUIRED') ORDER BY a.updated_at",[req.user.institutionId]);res.json({success:true,data:items});});
-app.post('/api/institution/applications/:id/verify', requireAuth, role('INSTITUTION'), async(req,res)=>{const applicationId=id(req.params.id),a=await application(applicationId);if(!a||a.institution_id!==req.user.institutionId)return fail(res,404,'Application not found.');const decision=text(req.body.decision).toUpperCase(),remarks=text(req.body.remarks,1000);if(!['VERIFIED','REJECTED','CORRECTION_REQUIRED'].includes(decision))return fail(res,400,'Invalid verification decision.');const status=decision==='VERIFIED'?'DOCUMENT_VERIFICATION':decision;await pool.query('INSERT INTO institution_verifications (application_id,institution_id,verifier_id,decision,remarks) VALUES (?,?,?,?,?)',[applicationId,req.user.institutionId,req.user.id,decision,remarks||null]);await pool.query('UPDATE applications SET status=? WHERE id=?',[status,applicationId]);await pool.query('INSERT INTO application_status_history (application_id,status,changed_by,remarks) VALUES (?,?,?,?)',[applicationId,status,req.user.id,remarks||null]);await notify(a.student_id,'VERIFICATION',`Institution verification: ${decision}`,remarks||'Your application status was updated.');emitApplicationEvent(pool,decision==='REJECTED'?'APPLICATION_REJECTED':'APPLICATION_VERIFIED',applicationId,{previousStatus:a.status,newStatus:status,decision});res.json({success:true});});
+app.post('/api/institution/applications/:id/verify', requireAuth, role('INSTITUTION'), async(req,res)=>{const applicationId=id(req.params.id),a=await application(applicationId);if(!a||a.institution_id!==req.user.institutionId)return fail(res,404,'Application not found.');const decision=text(req.body.decision).toUpperCase(),remarks=text(req.body.remarks,1000);if(!['VERIFIED','REJECTED','CORRECTION_REQUIRED'].includes(decision))return fail(res,400,'Invalid verification decision.');const status=decision==='VERIFIED'?'DOCUMENT_VERIFICATION':decision;await pool.query('INSERT INTO institution_verifications (application_id,institution_id,verifier_id,decision,remarks) VALUES (?,?,?,?,?)',[applicationId,req.user.institutionId,req.user.id,decision,remarks||null]);await pool.query('UPDATE applications SET status=? WHERE id=?',[status,applicationId]);await pool.query('INSERT INTO application_status_history (application_id,status,changed_by,remarks) VALUES (?,?,?,?)',[applicationId,status,req.user.id,remarks||null]);await notify(a.student_id,'VERIFICATION',`Institution verification: ${decision}`,remarks||'Your application status was updated.');
+const [[student]] = await pool.query(
+    'SELECT email FROM users WHERE id = ?',
+    [a.student_id]
+);
+
+emitApplicationEvent(
+    pool,
+    decision === 'REJECTED'
+        ? 'APPLICATION_REJECTED'
+        : 'APPLICATION_VERIFIED',
+    applicationId,
+    {
+        previousStatus: a.status,
+        newStatus: status,
+        decision,
+        publicId: a.public_id,
+        studentEmail: student?.email
+    }
+);
+res.json({ success: true });
+});
 app.post('/api/institution/documents/:id/verify', requireAuth, role('INSTITUTION'), async(req,res)=>{const documentId=id(req.params.id);const [[doc]]=await pool.query('SELECT d.*,a.institution_id FROM documents d JOIN applications a ON a.id=d.application_id WHERE d.id=?',[documentId]);if(!doc||doc.institution_id!==req.user.institutionId)return fail(res,404,'Document not found.');const decision=text(req.body.decision).toUpperCase();if(!['VERIFIED','REJECTED','REUPLOAD_REQUIRED'].includes(decision))return fail(res,400,'Invalid document decision.');await pool.query('UPDATE documents SET status=? WHERE id=?',[decision,documentId]);await pool.query('INSERT INTO document_verifications (document_id,verifier_id,decision,remarks) VALUES (?,?,?,?)',[documentId,req.user.id,decision,text(req.body.remarks,1000)||null]);res.json({success:true});});
 
 // ------------------------------------------------------------------
@@ -544,7 +582,25 @@ app.post('/api/government/applications/:id/decision', requireAuth, role('GOVERNM
     await conn.query('INSERT INTO application_status_history (application_id,status,changed_by,remarks) VALUES (?,?,?,?)', [applicationId, decision, req.user.id, remarks || null]);
     await notify(a.student_id, 'GOVERNMENT_DECISION', `Government review: ${decision}`, remarks || `Your ${a.scholarship_name} application (${a.public_id}) received a final ${decision} decision.`, applicationId, conn);
     await conn.commit();
-    emitApplicationEvent(pool, decision === 'REJECTED' ? 'APPLICATION_REJECTED' : 'APPLICATION_STATUS_CHANGED', applicationId, { previousStatus: a.status, newStatus: decision, publicId: a.public_id });
+const [[student]] = await conn.query(
+    'SELECT email FROM users WHERE id = ?',
+    [a.student_id]
+);
+
+emitApplicationEvent(
+    pool,
+    decision === 'REJECTED'
+        ? 'APPLICATION_REJECTED'
+        : 'APPLICATION_STATUS_CHANGED',
+    applicationId,
+    {
+        previousStatus: a.status,
+        newStatus: decision,
+        publicId: a.public_id,
+        studentEmail: student?.email
+    }
+);
+
     res.json({ success: true });
   } catch (error) { await conn.rollback(); fail(res, 500, 'Decision could not be saved.'); } finally { conn.release(); }
 });
